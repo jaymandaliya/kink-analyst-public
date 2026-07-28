@@ -53,7 +53,8 @@
       "Bash(command -v chromium-cli)",
       "Bash(xargs -I{} sh -c 'echo \"--- {} ---\"; grep -niE \"socket|post.*like|comment\" \"{}\" 2>/dev/null | head -5')",
       "Bash(git fetch *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(grep -rln *)"
     ]
   },
   "enableAllProjectMcpServers": true,

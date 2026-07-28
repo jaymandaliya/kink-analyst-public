@@ -97,7 +97,7 @@ function SuggLocationIcon() {
 
 function FriendSuggestionsPanel({ onUserClick }) {
   const dispatch   = useDispatch();
-  const { suggestions, dismissedIds: reduxDismissed, friendStatusMap, followingIds, allUsers, allUsersLoading } = useSelector(s => s.users);
+  const { suggestions, dismissedIds: reduxDismissed, friendStatusMap, followingIds, allUsers, allUsersLoading, blockedUserIds } = useSelector(s => s.users);
 
   const [poppingIds, setPoppingIds] = useState(new Set());
   const [removingIds, setRemovingIds] = useState(new Set());
@@ -140,7 +140,10 @@ function FriendSuggestionsPanel({ onUserClick }) {
     }, 380);
   }
 
-  const visible = suggestions.filter(f => !reduxDismissed.includes(f.id ?? f._id));
+  const visible = suggestions.filter(f => {
+    const id = f.id ?? f._id;
+    return !reduxDismissed.includes(id) && !blockedUserIds.includes(id);
+  });
 
   return (
     <div className="prof-conn-suggestions">
@@ -197,7 +200,7 @@ function FriendSuggestionsPanel({ onUserClick }) {
       })}
       {showAll && (
         <AllSuggestionsModal
-          suggestions={allUsers}
+          suggestions={allUsers.filter(u => !blockedUserIds.includes(u.id ?? u._id))}
           loading={allUsersLoading}
           friendStatusMap={friendStatusMap}
           followingIds={followingIds}
@@ -215,7 +218,7 @@ function FriendSuggestionsPanel({ onUserClick }) {
 export function ConnectionsTab({ onUserClick, onMessageUser, hideSearch }) {
   const dispatch = useDispatch();
   const { connections, connectionsTotal } = useSelector(s => s.profile);
-  const { friendRequests, blockedUsersList, blockedUsersListLoading, blockingId } = useSelector(s => s.users);
+  const { friendRequests, blockedUsersList, blockedUsersListLoading, blockingId, blockedUserIds } = useSelector(s => s.users);
 
   const [viewMode,  setViewMode]  = useState('list');
   const [search,    setSearch]    = useState('');
@@ -288,6 +291,7 @@ export function ConnectionsTab({ onUserClick, onMessageUser, hideSearch }) {
   }
 
   const visible = connections.filter(c =>
+    !blockedUserIds.includes(c.id ?? c._id) &&
     c.name.toLowerCase().includes(search.toLowerCase()) &&
     (!filterLoc || c.location === filterLoc) &&
     (!filterInd || c.industry === filterInd)

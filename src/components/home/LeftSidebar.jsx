@@ -65,7 +65,7 @@ export default function LeftSidebar({ onEventsClick, onMessagesClick, onGroupsCl
   const dispatch = useDispatch();
   const { user: authUser } = useSelector((state) => state.auth);
   const { profile } = useSelector((state) => state.profile);
-  const { suggestions, dismissedIds, groups, friendStatusMap, followingIds, allUsers, allUsersLoading } = useSelector((state) => state.users);
+  const { suggestions, dismissedIds, groups, friendStatusMap, followingIds, allUsers, allUsersLoading, blockedUserIds } = useSelector((state) => state.users);
   const { conversations } = useSelector((state) => state.messages);
   const { events: upcomingEvents } = useSelector((state) => state.events);
   const unreadMessages = conversations.reduce((sum, c) => sum + (c.unreadCount ?? 0), 0);
@@ -130,7 +130,10 @@ export default function LeftSidebar({ onEventsClick, onMessagesClick, onGroupsCl
     if (id === 'minisites') onMinisitesClick?.();
   }
 
-  const visibleSuggestions = suggestions.filter(f => !dismissedIds.includes(f.id ?? f._id));
+  const visibleSuggestions = suggestions.filter(f => {
+    const id = f.id ?? f._id;
+    return !dismissedIds.includes(id) && !blockedUserIds.includes(id);
+  });
 
   return (
     <aside className="home-left-panel">
@@ -320,7 +323,7 @@ export default function LeftSidebar({ onEventsClick, onMessagesClick, onGroupsCl
 
       {showAllSuggestions && (
         <AllSuggestionsModal
-          suggestions={allUsers}
+          suggestions={allUsers.filter(u => !blockedUserIds.includes(u.id ?? u._id))}
           loading={allUsersLoading}
           friendStatusMap={friendStatusMap}
           followingIds={followingIds}

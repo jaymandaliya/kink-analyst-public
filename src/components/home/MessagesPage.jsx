@@ -12,6 +12,7 @@ import {
   addGroupMembers, removeGroupMember, setActiveConvId, updateGroup, syncMessages,
 } from '../../store/slices/messagesSlice';
 import { fetchConnections } from '../../store/slices/profileSlice';
+import { blockUser, unblockUser } from '../../store/slices/usersSlice';
 import { showToast } from '../../store/slices/toastSlice';
 import {
   joinConversation, leaveConversation,
@@ -276,6 +277,11 @@ function NewMessageModal({ onClose, onStartDM, onOpenConversation, onCreateGroup
   const dispatch = useDispatch();
   const { connections, connectionsLoading } = useSelector(s => s.profile);
   const { blockedUsers } = useSelector(s => s.messages);
+  // Users blocked from their profile page (usersSlice) and users blocked from
+  // inside a specific chat (messagesSlice) are two separate backend actions —
+  // treat either one as "blocked" here so a blocked person can't be reached
+  // through the New Message flow either way.
+  const { blockedUserIds: profileBlockedIds } = useSelector(s => s.users);
 
   const [view,        setView]        = useState('dm');
   const [search,      setSearch]      = useState('');
@@ -295,7 +301,7 @@ function NewMessageModal({ onClose, onStartDM, onOpenConversation, onCreateGroup
   // Exclude anyone currently blocked — blockedUsers holds normalized
   // conversation objects (see fetchBlockedConversations), so match on
   // participantId (the blocked person's user id), not the conversation id.
-  const blockedUserIds = new Set(blockedUsers.map(b => b.participantId).filter(Boolean));
+  const blockedUserIds = new Set([...blockedUsers.map(b => b.participantId).filter(Boolean), ...profileBlockedIds]);
   const connectionContacts = connections.map(c => ({
     id: c.id,
     name: c.name,
@@ -537,8 +543,16 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
   } = useSelector(s => s.messages);
   const { connections } = useSelector(s => s.profile);
   const { user: authUser } = useSelector(s => s.auth);
+  // Blocking someone from their profile page (usersSlice) is a separate
+  // backend action from blocking a conversation (messagesSlice) — treat
+  // either as blocked so they disappear from the chat list either way.
+  const { blockedUserIds: profileBlockedIds } = useSelector(s => s.users);
   const myUserId = authUser?._id ?? authUser?.id ?? null;
-  const onlineConnections = connections.filter(c => c.online);
+  // "Quick Online" is a separate list from the conversations list — it needs
+  // its own blocked-user exclusion (both conversation-level and profile-level
+  // blocks) since it doesn't go through getOnlineStatus()/visibleConversations.
+  const blockedConnectionIds = new Set([...blockedUsers.map(b => b.participantId).filter(Boolean), ...profileBlockedIds]);
+  const onlineConnections = connections.filter(c => c.online && !blockedConnectionIds.has(c.id));
 
   const [tab,              setTab]             = useState('All');
   const [createPostOpen,   setCreatePostOpen]  = useState(false);
@@ -952,6 +966,15 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
         // this fetch. Without it, someone just blocked this session keeps
         // showing up in "New Message" until the next full page load.
         dispatch(fetchBlockedConversations());
+        // Blocking a conversation and blocking a user are separate backend
+        // actions (messagesSlice vs usersSlice) — but a 1:1 chat only ever
+        // has one other participant, so blocking it here should read as
+        // blocking that person everywhere (profile page, suggestions, etc.),
+        // not just muting this one chat.
+        const participantId = getParticipantId(activeConv);
+        if (participantId && activeConv.type !== 'group') {
+          dispatch(result.payload.blocked ? blockUser(participantId) : unblockUser(participantId));
+        }
       } else {
         dispatch(showToast({ message: result.payload ?? 'Failed to update block status', type: 'error' }));
       }
@@ -1036,6 +1059,9 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
       if (toggleBlock.fulfilled.match(result)) {
         dispatch(removeBlockedUser(user.id));
         dispatch(showToast({ message: `${user.name} unblocked`, type: 'success' }));
+        // Keep the profile-level block status (usersSlice) in sync too — see
+        // the same note in handleConfirmAction's 'block' branch.
+        if (user.participantId) dispatch(unblockUser(user.participantId));
       } else {
         dispatch(showToast({ message: result.payload ?? 'Failed to unblock user', type: 'error' }));
       }
@@ -1129,6 +1155,11 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
   const liveActiveConv = activeConv ? (conversations.find(c => c.id === activeConv.id) ?? activeConv) : null;
   const activeOnline = getOnlineStatus(liveActiveConv);
   const totalUnread = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+  // A conversation-level block (messagesSlice) already gets moved server-side
+  // into the "Blocked" tab, but a profile-level block (usersSlice) has no
+  // such backend-side effect on the conversations list — filter those out
+  // here so a blocked person's chat doesn't linger in "All".
+  const visibleConversations = conversations.filter(c => !profileBlockedIds.includes(getParticipantId(c)));
 
   // "N online" in the group header — cross-references this group's member IDs
   // (fetched in openConversation) against the platform-wide online-users list
@@ -1176,7 +1207,7 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
             <button className="msg-compose-label-btn msg-compose-label-btn--sm" onClick={() => setNewMsgOpen(true)}>New Message</button>
           </div>
           <div className="msg-conv-panel-list">
-            {conversations.map(conv => (
+            {visibleConversations.map(conv => (
               <div
                 key={conv.id}
                 className={`msg-compact-item${activeConv.id === conv.id ? ' msg-compact-item--active' : ''}`}
@@ -2086,7 +2117,7 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
               <button className="msg-list-empty-cta" onClick={() => setNewMsgOpen(true)}>New Message</button>
             </div>
           )}
-          {conversations.map(conv => (
+          {visibleConversations.map(conv => (
             <div
               key={conv.id}
               className={`msg-conv${conv.unreadCount > 0 ? ' msg-conv--unread' : ''}`}
