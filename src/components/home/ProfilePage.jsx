@@ -177,7 +177,15 @@ function FriendSuggestionsPanel({ onUserClick }) {
               </div>
               <div className="prof-sugg-info">
                 <p className="prof-sugg-name" style={{ cursor: 'pointer' }} onClick={() => onUserClick?.(id)}>{f.name}</p>
-                {sub && <p className="prof-sugg-sub" style={{ margin: '-7px 0 0 0' }}>{hasMutual ? <MutualIcon /> : <SuggLocationIcon />}{sub}</p>}
+                {sub && (
+                  <p
+                    className="prof-sugg-sub"
+                    style={{ margin: '-7px 0 0 0', cursor: hasMutual ? 'pointer' : 'default' }}
+                    onClick={hasMutual ? () => onUserClick?.(id) : undefined}
+                  >
+                    {hasMutual ? <MutualIcon /> : <SuggLocationIcon />}{sub}
+                  </p>
+                )}
               </div>
             </div>
             <div className="prof-sugg-actions">

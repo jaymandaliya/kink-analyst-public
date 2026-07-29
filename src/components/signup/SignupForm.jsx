@@ -285,7 +285,7 @@ export default function SignupForm() {
                   id="signup-password"
                   name="password"
                   type={showPassword ? 'text' : 'password'}
-                  placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
+                  placeholder="Enter your password"
                   value={form.password}
                   onChange={handleChange}
                   autoComplete="new-password"

@@ -4,6 +4,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { fetchSuggestions, sendFriendRequest, dismissSuggestion, fetchGroups, followUser, unfollowUser, fetchAllUsers } from '../../store/slices/usersSlice';
 import { fetchUserProfile } from '../../store/slices/profileSlice';
 import { fetchEvents } from '../../store/slices/eventsSlice';
+import { apiRequest } from '../../services/api';
 import CreatePostModal from './CreatePostModal';
 import AnimatedNav from './AnimatedNav';
 
@@ -61,9 +62,81 @@ function initials(name = '') {
   return name.split(' ').map(w => w[0]).join('').toUpperCase();
 }
 
+// Small popup listing the mutual connections between me and one suggested
+// user — opened by clicking the "N mutual" text on a suggestion card.
+// Reuses the same fp-* classes as the Followers/Following panel in
+// ProfilePage.jsx so it looks consistent without new CSS.
+function MutualFriendsModal({ userId, token, onClose, onUserClick }) {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    apiRequest(`/api/users/${userId}/mutual-connections?page=1&limit=20`, { token })
+      .then((res) => {
+        if (cancelled) return;
+        const results = Array.isArray(res) ? res : (res?.results ?? []);
+        setList(results.map(c => ({
+          id: c.id ?? c._id,
+          name: c.fullName ?? c.name ?? '',
+          avatar: c.avatar?.startsWith?.('http') ? c.avatar : '',
+          location: c.location ?? c.city ?? '',
+        })));
+      })
+      .catch(() => { if (!cancelled) setList([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [userId, token]);
+
+  return (
+    <div className="fp-overlay" onClick={onClose}>
+      <div className="fp-panel" onClick={e => e.stopPropagation()}>
+        <div className="fp-header">
+          <div className="fp-tabs">
+            <span className="fp-tab fp-tab--active">Mutual Friends</span>
+          </div>
+          <button className="fp-close" onClick={onClose}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div className="fp-list">
+          {loading && list.length === 0 && (
+            <div className="fp-loading">
+              <span className="fp-spinner" />
+              <p style={{ margin: 0 }}>Loading mutual friends…</p>
+            </div>
+          )}
+          {!loading && list.length === 0 && <p className="fp-empty">No mutual friends</p>}
+          {list.map(person => (
+            <div className="fp-person" key={person.id}>
+              {person.avatar
+                ? <img className="fp-avatar" style={{ cursor: 'pointer' }} src={person.avatar} alt={person.name} onClick={() => { onUserClick?.(person.id); onClose(); }} />
+                : (
+                  <div
+                    className="fp-avatar"
+                    style={{ background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16, flexShrink: 0, cursor: 'pointer' }}
+                    onClick={() => { onUserClick?.(person.id); onClose(); }}
+                  >
+                    {initials(person.name)}
+                  </div>
+                )
+              }
+              <div className="fp-info">
+                <span className="fp-name" style={{ cursor: 'pointer' }} onClick={() => { onUserClick?.(person.id); onClose(); }}>{person.name}</span>
+                {person.location && <span className="fp-role">{person.location}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LeftSidebar({ onEventsClick, onMessagesClick, onGroupsClick, onCalendarClick, onCoursesClick, onLibraryClick, onProfileClick, onFollowingClick, onFollowersClick, onMinisitesClick, onGroupClick, onEventClick, onUserClick, onCreateGroup, onCreateEvent }) {
   const dispatch = useDispatch();
-  const { user: authUser } = useSelector((state) => state.auth);
+  const { user: authUser, token } = useSelector((state) => state.auth);
   const { profile } = useSelector((state) => state.profile);
   const { suggestions, dismissedIds, groups, friendStatusMap, followingIds, allUsers, allUsersLoading, blockedUserIds } = useSelector((state) => state.users);
   const { conversations } = useSelector((state) => state.messages);
@@ -74,6 +147,7 @@ export default function LeftSidebar({ onEventsClick, onMessagesClick, onGroupsCl
   const [activeNavId, setActiveNavId] = useState('home');
   const [poppingIds,  setPoppingIds]  = useState(new Set());
   const [showAllSuggestions, setShowAllSuggestions] = useState(false);
+  const [mutualModalId, setMutualModalId] = useState(null); // userId whose mutual friends are being viewed
 
   useEffect(() => {
     dispatch(fetchUserProfile());
@@ -224,7 +298,11 @@ export default function LeftSidebar({ onEventsClick, onMessagesClick, onGroupsCl
                     </div>
                     <div className="friend-info">
                       <p className="friend-name" style={{ cursor: 'pointer' }} onClick={() => onUserClick?.(id)}>{f.name}</p>
-                      <p className="friend-sub" style={{ margin: '-7px 0 0 0' }}>
+                      <p
+                        className="friend-sub"
+                        style={{ margin: '-7px 0 0 0', cursor: f.mutualFriends > 0 ? 'pointer' : 'default' }}
+                        onClick={f.mutualFriends > 0 ? () => setMutualModalId(id) : undefined}
+                      >
                         {f.mutualFriends > 0 ? (
                           <><MutualIcon />{f.mutualFriends} mutual</>
                         ) : (f.location || f.city) ? (
@@ -332,13 +410,23 @@ export default function LeftSidebar({ onEventsClick, onMessagesClick, onGroupsCl
           onFollowToggle={handleFollowToggle}
           onDismiss={handleDismiss}
           onUserClick={onUserClick}
+          onMutualClick={setMutualModalId}
+        />
+      )}
+
+      {mutualModalId && (
+        <MutualFriendsModal
+          userId={mutualModalId}
+          token={token}
+          onUserClick={onUserClick}
+          onClose={() => setMutualModalId(null)}
         />
       )}
     </aside>
   );
 }
 
-export function AllSuggestionsModal({ suggestions, loading, friendStatusMap, followingIds, onClose, onAddFriend, onFollowToggle, onDismiss, onUserClick }) {
+export function AllSuggestionsModal({ suggestions, loading, friendStatusMap, followingIds, onClose, onAddFriend, onFollowToggle, onDismiss, onUserClick, onMutualClick }) {
   const [search, setSearch] = useState('');
 
   const visible = suggestions
@@ -393,7 +481,11 @@ export function AllSuggestionsModal({ suggestions, loading, friendStatusMap, fol
                   </div>
                   <div className="friend-info">
                     <p className="friend-name" style={{ cursor: 'pointer' }} onClick={() => onUserClick?.(id)}>{f.name}</p>
-                    <p className="friend-sub" style={{ margin: '-7px 0 0 0' }}>
+                    <p
+                      className="friend-sub"
+                      style={{ margin: '-7px 0 0 0', cursor: f.mutualFriends ? 'pointer' : 'default' }}
+                      onClick={f.mutualFriends ? () => onMutualClick?.(id) : undefined}
+                    >
                       {f.mutualFriends ? (
                         <><MutualIcon />{f.mutualFriends} mutual</>
                       ) : (f.location || f.city) ? (

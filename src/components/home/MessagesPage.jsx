@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, Fragment } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import './MessagesPage.css';
 import AnimatedNav from './AnimatedNav';
@@ -95,6 +95,27 @@ function formatSystemDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
+  return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// Date objects' getFullYear/getMonth/getDate (no "UTC" prefix) read the
+// browser's local timezone, so "day" here always means the viewer's local
+// calendar day — this is what makes the separator (and the message time
+// below) correct regardless of which timezone the server wrote createdAt in.
+function localDayKey(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function dateSepLabel(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return 'Today';
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (localDayKey(iso) === localDayKey(today)) return 'Today';
+  if (localDayKey(iso) === localDayKey(yesterday)) return 'Yesterday';
   return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
 }
 
@@ -1299,8 +1320,6 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                 <div style={{ textAlign: 'center', padding: '32px 0', color: '#5c6a8c', fontSize: 13 }}>Loading messages…</div>
               )}
 
-              {!messagesLoading && !searchActive && <div className="msg-date-sep"><span>TODAY</span></div>}
-
               {!messagesLoading && messages.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: '#5c6a8c', fontSize: 13 }}>No messages yet. Say hello!</div>
               )}
@@ -1309,7 +1328,21 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                 <div style={{ textAlign: 'center', padding: '40px 0', color: '#5c6a8c', fontSize: 13 }}>No messages match "{chatSearchQuery.trim()}".</div>
               )}
 
-              {displayedMessages.map(msg => {
+              {displayedMessages.map((msg, idx) => {
+                // A separator shows whenever this message's local calendar day
+                // differs from the previous message's (or it's the first one) —
+                // not searchActive, since search results skip around in time and
+                // a per-day separator there would be misleading, not helpful.
+                const prevMsg = displayedMessages[idx - 1];
+                // Optimistic pending messages (see sendMessage.pending in
+                // messagesSlice.js) have no createdAt yet — treat them as "now"
+                // so they don't spuriously re-trigger a same-day separator.
+                const msgCreatedAt = msg.createdAt || new Date().toISOString();
+                const showDateSep = !searchActive && (idx === 0 || localDayKey(msgCreatedAt) !== localDayKey(prevMsg.createdAt || new Date().toISOString()));
+                const dateSep = showDateSep && (
+                  <div className="msg-date-sep"><span>{dateSepLabel(msgCreatedAt)}</span></div>
+                );
+
                 if (msg.type === 'system') {
                   const actorName = msg.actor?.name || 'Someone';
                   const targetName = msg.target?.name || 'a member';
@@ -1323,9 +1356,12 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                     renamed: `${actorName} renamed the group`,
                   }[msg.systemAction] ?? msg.text ?? `${actorName} updated the group`;
                   return (
-                    <div key={msg.id} className="msg-system-row">
-                      <span className="msg-system-text">{systemText}</span>
-                    </div>
+                    <Fragment key={msg.id}>
+                      {dateSep}
+                      <div className="msg-system-row">
+                        <span className="msg-system-text">{systemText}</span>
+                      </div>
+                    </Fragment>
                   );
                 }
                 const mediaVisuals = msg.media.filter(m => m.type === 'image' || m.type === 'video');
@@ -1343,7 +1379,9 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                 const bubbleAvatarUrl = groupSender?.avatarUrl || msg.senderAvatar || activeConv.avatarUrl;
                 const bubbleAvatarName = groupSender?.name || msg.senderName || activeConv.name;
                 return (
-                <div key={msg.id} className={`msg-bubble-row${msg.from === 'me' ? ' msg-bubble-row--me' : ''}`} style={msg.pending ? { opacity: 0.6 } : undefined}>
+                <Fragment key={msg.id}>
+                {dateSep}
+                <div className={`msg-bubble-row${msg.from === 'me' ? ' msg-bubble-row--me' : ''}`} style={msg.pending ? { opacity: 0.6 } : undefined}>
                   {msg.from !== 'me' && (
                     <div
                       className="msg-avatar msg-avatar--xs"
@@ -1416,6 +1454,7 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                     )}
                   </div>
                 </div>
+                </Fragment>
                 );
               })}
 

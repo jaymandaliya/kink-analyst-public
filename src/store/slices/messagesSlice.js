@@ -13,6 +13,19 @@ function lastMessagePreviewText({ text, type, fromMe }) {
   return text || attachmentPreviewText(type, fromMe);
 }
 
+// Prefer computing the clock time from createdAt client-side — toLocaleTimeString
+// with no timeZone option renders in the viewer's own browser timezone, so this
+// self-corrects regardless of what timezone the server wrote createdAt in. Only
+// falls back to a pre-formatted `time` string from the backend (or '') when
+// createdAt is missing/unparseable, e.g. not-yet-migrated older payloads.
+function localMsgTime(createdAt, fallback) {
+  const d = new Date(createdAt);
+  if (createdAt && !Number.isNaN(d.getTime())) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return fallback ?? '';
+}
+
 function normalizeConversation(c) {
   return {
     id: c.id ?? c._id ?? '',
@@ -32,7 +45,7 @@ function normalizeConversation(c) {
         type: c.lastMessage.type,
         fromMe: c.lastMessage.fromMe ?? false,
       }),
-      time: c.lastMessage.time ?? '',
+      time: localMsgTime(c.lastMessage.createdAt, c.lastMessage.time),
       fromMe: c.lastMessage.fromMe ?? false,
     } : null,
     unreadCount: c.unreadCount ?? 0,
@@ -91,7 +104,7 @@ function normalizeMessage(m) {
     target: m.target ? { id: m.target.id ?? m.target._id ?? '', name: m.target.name ?? '' } : null,
     text: m.text ?? '',
     media,
-    time: m.time ?? '',
+    time: localMsgTime(m.createdAt, m.time),
     read: m.read ?? false,
     createdAt: m.createdAt ?? '',
     senderId: m.senderId ?? sender?.id ?? sender?._id ?? null,

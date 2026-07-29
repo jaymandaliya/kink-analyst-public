@@ -497,6 +497,7 @@ export default function UserProfilePage({
   const followersCount = viewedUser?.followersCount ?? 0;
   const followingCount = viewedUser?.followingCount ?? 0;
   const postsCount = viewedUser?.postsCount ?? viewedPosts.length;
+  const mutualCount = viewedUser?.mutualCount ?? 0;
 
   return (
     <>
@@ -566,6 +567,15 @@ export default function UserProfilePage({
                 <span className="prof-count-num">{postsCount}</span>
                 <span className="prof-count-lbl">Posts</span>
               </button>
+              {!isSelf && mutualCount > 0 && (
+                <>
+                  <span className="prof-count-div" />
+                  <button className="prof-count-item" onClick={() => setActiveTab("Connections")} title="View mutual connections">
+                    <span className="prof-count-num">{mutualCount.toLocaleString()}</span>
+                    <span className="prof-count-lbl">Mutual</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
 

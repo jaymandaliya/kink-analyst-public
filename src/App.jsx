@@ -1,6 +1,5 @@
 import { useSelector } from 'react-redux';
 import Toast from './components/Toast';
-import Loader from './components/Loader';
 import SignupPage from './components/signup/SignupPage';
 import LoginPage from './components/login/LoginPage';
 import ForgotPasswordPage from './components/forgot-password/ForgotPasswordPage';
@@ -10,12 +9,9 @@ import HomePage from './components/home/HomePage';
 import OnboardingForm from './components/home/OnboardingForm';
 
 export default function App() {
-  const { otpPending, isAuthenticated, requiresPlanSelection, user, loading } = useSelector((state) => state.auth);
+  const { otpPending, isAuthenticated, requiresPlanSelection, user } = useSelector((state) => state.auth);
   const { planSelectionComplete, justSelectedPlan } = useSelector((state) => state.plans);
   const { page } = useSelector((state) => state.ui);
-
-  // Show loader during initial auth loading
-  if (loading) return <Loader />;
 
   if (otpPending) return <><Toast /><VerifyOtpPage /></>;
 
