@@ -344,8 +344,9 @@ export default function Navbar({ onMessagesClick, onProfileClick, onConnectionsC
                 const nid = n.id ?? n._id;
                 const respondedAction = respondedNotifActions.get(nid);
                 const isPendingRequest = n.type === 'friend_request' && !respondedAction;
-                const isPendingGroupInvite = (n.type === 'group_invitation' || n.relatedGroup) && !respondedAction;
-                if (n.relatedGroup) console.log('Group invite notif:', { type: n.type, has_relatedGroup: true });
+                const isGroupInviteByText = n.text?.includes('invited you to join') || n.text?.includes('group');
+                const isPendingGroupInvite = (n.type === 'group_invitation' || n.relatedGroup || isGroupInviteByText) && !respondedAction;
+                console.log('Notif:', { type: n.type, text: n.text, hasGroup: !!n.relatedGroup, byText: isGroupInviteByText, pending: isPendingGroupInvite });
                 return (
                   <div
                     key={nid ?? i}
