@@ -8,6 +8,7 @@ import { EventsTab, MediaTab } from "./ProfilePage";
 import { followUser, unfollowUser, sendFriendRequest, acceptFriendRequest, rejectFriendRequest, blockUser, unblockUser, fetchBlockStatus } from "../../store/slices/usersSlice";
 import { normalizePost, setViewedPosts as setViewedPostsAction } from "../../store/slices/postsSlice";
 import { fetchConnections } from "../../store/slices/profileSlice";
+import { toggleBlock } from "../../store/slices/messagesSlice";
 import { showToast } from "../../store/slices/toastSlice";
 import { apiRequest } from "../../services/api";
 import { getSocket } from "../../services/socket";
@@ -235,6 +236,11 @@ export default function UserProfilePage({
   const dispatch = useDispatch();
   const { user: authUser, token } = useSelector((s) => s.auth);
   const { followingIds, friendStatusMap, blockedUserIds, blockingId } = useSelector((s) => s.users);
+  // Blocking here (usersSlice) and blocking a conversation (messagesSlice) are
+  // separate backend actions — if a DM with this person already exists, keep
+  // its conversation-level block state in sync too, so the chat's own
+  // Block/Unblock button and message input reflect the same status.
+  const { conversations: messageConversations, blockedConvIds } = useSelector((s) => s.messages);
   // Posts live in Redux (not local state) so PostCard's like/comment/reply/share
   // dispatches — which update state.posts.viewedPosts — are reflected here.
   const viewedPosts = useSelector((s) => s.posts.viewedPosts);
@@ -458,6 +464,10 @@ export default function UserProfilePage({
     if (blockUser.fulfilled.match(result)) {
       setBlockConfirmOpen(false);
       dispatch(showToast({ message: `${displayName} has been blocked`, type: 'success' }));
+      // toggleBlock flips whatever the current state is, so only fire it when
+      // the conversation isn't already blocked — otherwise this would undo it.
+      const existingConv = messageConversations.find(c => c.participantId === userId);
+      if (existingConv && !blockedConvIds[existingConv.id]) dispatch(toggleBlock(existingConv.id));
     } else {
       dispatch(showToast({ message: result.payload ?? 'Failed to block user', type: 'error' }));
     }
@@ -467,6 +477,8 @@ export default function UserProfilePage({
     const result = await dispatch(unblockUser(userId));
     if (unblockUser.fulfilled.match(result)) {
       dispatch(showToast({ message: `${displayName} has been unblocked`, type: 'success' }));
+      const existingConv = messageConversations.find(c => c.participantId === userId);
+      if (existingConv && blockedConvIds[existingConv.id]) dispatch(toggleBlock(existingConv.id));
     } else {
       dispatch(showToast({ message: result.payload ?? 'Failed to unblock user', type: 'error' }));
     }
@@ -503,6 +515,7 @@ export default function UserProfilePage({
   const followersCount = viewedUser?.followersCount ?? 0;
   const followingCount = viewedUser?.followingCount ?? 0;
   const postsCount = viewedUser?.postsCount ?? viewedPosts.length;
+  const mutualCount = viewedUser?.mutualCount ?? 0;
 
   return (
     <>
@@ -572,6 +585,15 @@ export default function UserProfilePage({
                 <span className="prof-count-num">{postsCount}</span>
                 <span className="prof-count-lbl">Posts</span>
               </button>
+              {!isSelf && mutualCount > 0 && (
+                <>
+                  <span className="prof-count-div" />
+                  <button className="prof-count-item" onClick={() => setActiveTab("Connections")} title="View mutual connections">
+                    <span className="prof-count-num">{mutualCount.toLocaleString()}</span>
+                    <span className="prof-count-lbl">Mutual</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
 

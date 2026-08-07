@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, Fragment } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import './MessagesPage.css';
 import AnimatedNav from './AnimatedNav';
@@ -12,6 +12,7 @@ import {
   addGroupMembers, removeGroupMember, setActiveConvId, updateGroup, syncMessages,
 } from '../../store/slices/messagesSlice';
 import { fetchConnections } from '../../store/slices/profileSlice';
+import { blockUser, unblockUser } from '../../store/slices/usersSlice';
 import { showToast } from '../../store/slices/toastSlice';
 import {
   joinConversation, leaveConversation,
@@ -94,6 +95,27 @@ function formatSystemDate(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
+  return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+// Date objects' getFullYear/getMonth/getDate (no "UTC" prefix) read the
+// browser's local timezone, so "day" here always means the viewer's local
+// calendar day — this is what makes the separator (and the message time
+// below) correct regardless of which timezone the server wrote createdAt in.
+function localDayKey(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+function dateSepLabel(iso) {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return 'Today';
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (localDayKey(iso) === localDayKey(today)) return 'Today';
+  if (localDayKey(iso) === localDayKey(yesterday)) return 'Yesterday';
   return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
 }
 
@@ -276,6 +298,11 @@ function NewMessageModal({ onClose, onStartDM, onOpenConversation, onCreateGroup
   const dispatch = useDispatch();
   const { connections, connectionsLoading } = useSelector(s => s.profile);
   const { blockedUsers } = useSelector(s => s.messages);
+  // Users blocked from their profile page (usersSlice) and users blocked from
+  // inside a specific chat (messagesSlice) are two separate backend actions —
+  // treat either one as "blocked" here so a blocked person can't be reached
+  // through the New Message flow either way.
+  const { blockedUserIds: profileBlockedIds } = useSelector(s => s.users);
 
   const [view,        setView]        = useState('dm');
   const [search,      setSearch]      = useState('');
@@ -295,7 +322,7 @@ function NewMessageModal({ onClose, onStartDM, onOpenConversation, onCreateGroup
   // Exclude anyone currently blocked — blockedUsers holds normalized
   // conversation objects (see fetchBlockedConversations), so match on
   // participantId (the blocked person's user id), not the conversation id.
-  const blockedUserIds = new Set(blockedUsers.map(b => b.participantId).filter(Boolean));
+  const blockedUserIds = new Set([...blockedUsers.map(b => b.participantId).filter(Boolean), ...profileBlockedIds]);
   const connectionContacts = connections.map(c => ({
     id: c.id,
     name: c.name,
@@ -537,8 +564,16 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
   } = useSelector(s => s.messages);
   const { connections } = useSelector(s => s.profile);
   const { user: authUser } = useSelector(s => s.auth);
+  // Blocking someone from their profile page (usersSlice) is a separate
+  // backend action from blocking a conversation (messagesSlice) — treat
+  // either as blocked so they disappear from the chat list either way.
+  const { blockedUserIds: profileBlockedIds } = useSelector(s => s.users);
   const myUserId = authUser?._id ?? authUser?.id ?? null;
-  const onlineConnections = connections.filter(c => c.online);
+  // "Quick Online" is a separate list from the conversations list — it needs
+  // its own blocked-user exclusion (both conversation-level and profile-level
+  // blocks) since it doesn't go through getOnlineStatus()/visibleConversations.
+  const blockedConnectionIds = new Set([...blockedUsers.map(b => b.participantId).filter(Boolean), ...profileBlockedIds]);
+  const onlineConnections = connections.filter(c => c.online && !blockedConnectionIds.has(c.id));
 
   const [tab,              setTab]             = useState('All');
   const [createPostOpen,   setCreatePostOpen]  = useState(false);
@@ -952,6 +987,15 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
         // this fetch. Without it, someone just blocked this session keeps
         // showing up in "New Message" until the next full page load.
         dispatch(fetchBlockedConversations());
+        // Blocking a conversation and blocking a user are separate backend
+        // actions (messagesSlice vs usersSlice) — but a 1:1 chat only ever
+        // has one other participant, so blocking it here should read as
+        // blocking that person everywhere (profile page, suggestions, etc.),
+        // not just muting this one chat.
+        const participantId = getParticipantId(activeConv);
+        if (participantId && activeConv.type !== 'group') {
+          dispatch(result.payload.blocked ? blockUser(participantId) : unblockUser(participantId));
+        }
       } else {
         dispatch(showToast({ message: result.payload ?? 'Failed to update block status', type: 'error' }));
       }
@@ -1036,6 +1080,9 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
       if (toggleBlock.fulfilled.match(result)) {
         dispatch(removeBlockedUser(user.id));
         dispatch(showToast({ message: `${user.name} unblocked`, type: 'success' }));
+        // Keep the profile-level block status (usersSlice) in sync too — see
+        // the same note in handleConfirmAction's 'block' branch.
+        if (user.participantId) dispatch(unblockUser(user.participantId));
       } else {
         dispatch(showToast({ message: result.payload ?? 'Failed to unblock user', type: 'error' }));
       }
@@ -1129,6 +1176,11 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
   const liveActiveConv = activeConv ? (conversations.find(c => c.id === activeConv.id) ?? activeConv) : null;
   const activeOnline = getOnlineStatus(liveActiveConv);
   const totalUnread = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+  // A conversation-level block (messagesSlice) already gets moved server-side
+  // into the "Blocked" tab, but a profile-level block (usersSlice) has no
+  // such backend-side effect on the conversations list — filter those out
+  // here so a blocked person's chat doesn't linger in "All".
+  const visibleConversations = conversations.filter(c => !profileBlockedIds.includes(getParticipantId(c)));
 
   // "N online" in the group header — cross-references this group's member IDs
   // (fetched in openConversation) against the platform-wide online-users list
@@ -1176,7 +1228,7 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
             <button className="msg-compose-label-btn msg-compose-label-btn--sm" onClick={() => setNewMsgOpen(true)}>New Message</button>
           </div>
           <div className="msg-conv-panel-list">
-            {conversations.map(conv => (
+            {visibleConversations.map(conv => (
               <div
                 key={conv.id}
                 className={`msg-compact-item${activeConv.id === conv.id ? ' msg-compact-item--active' : ''}`}
@@ -1268,8 +1320,6 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                 <div style={{ textAlign: 'center', padding: '32px 0', color: '#5c6a8c', fontSize: 13 }}>Loading messages…</div>
               )}
 
-              {!messagesLoading && !searchActive && <div className="msg-date-sep"><span>TODAY</span></div>}
-
               {!messagesLoading && messages.length === 0 && (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: '#5c6a8c', fontSize: 13 }}>No messages yet. Say hello!</div>
               )}
@@ -1278,7 +1328,21 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                 <div style={{ textAlign: 'center', padding: '40px 0', color: '#5c6a8c', fontSize: 13 }}>No messages match "{chatSearchQuery.trim()}".</div>
               )}
 
-              {displayedMessages.map(msg => {
+              {displayedMessages.map((msg, idx) => {
+                // A separator shows whenever this message's local calendar day
+                // differs from the previous message's (or it's the first one) —
+                // not searchActive, since search results skip around in time and
+                // a per-day separator there would be misleading, not helpful.
+                const prevMsg = displayedMessages[idx - 1];
+                // Optimistic pending messages (see sendMessage.pending in
+                // messagesSlice.js) have no createdAt yet — treat them as "now"
+                // so they don't spuriously re-trigger a same-day separator.
+                const msgCreatedAt = msg.createdAt || new Date().toISOString();
+                const showDateSep = !searchActive && (idx === 0 || localDayKey(msgCreatedAt) !== localDayKey(prevMsg.createdAt || new Date().toISOString()));
+                const dateSep = showDateSep && (
+                  <div className="msg-date-sep"><span>{dateSepLabel(msgCreatedAt)}</span></div>
+                );
+
                 if (msg.type === 'system') {
                   const actorName = msg.actor?.name || 'Someone';
                   const targetName = msg.target?.name || 'a member';
@@ -1292,9 +1356,12 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                     renamed: `${actorName} renamed the group`,
                   }[msg.systemAction] ?? msg.text ?? `${actorName} updated the group`;
                   return (
-                    <div key={msg.id} className="msg-system-row">
-                      <span className="msg-system-text">{systemText}</span>
-                    </div>
+                    <Fragment key={msg.id}>
+                      {dateSep}
+                      <div className="msg-system-row">
+                        <span className="msg-system-text">{systemText}</span>
+                      </div>
+                    </Fragment>
                   );
                 }
                 const mediaVisuals = msg.media.filter(m => m.type === 'image' || m.type === 'video');
@@ -1312,7 +1379,9 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                 const bubbleAvatarUrl = groupSender?.avatarUrl || msg.senderAvatar || activeConv.avatarUrl;
                 const bubbleAvatarName = groupSender?.name || msg.senderName || activeConv.name;
                 return (
-                <div key={msg.id} className={`msg-bubble-row${msg.from === 'me' ? ' msg-bubble-row--me' : ''}`} style={msg.pending ? { opacity: 0.6 } : undefined}>
+                <Fragment key={msg.id}>
+                {dateSep}
+                <div className={`msg-bubble-row${msg.from === 'me' ? ' msg-bubble-row--me' : ''}`} style={msg.pending ? { opacity: 0.6 } : undefined}>
                   {msg.from !== 'me' && (
                     <div
                       className="msg-avatar msg-avatar--xs"
@@ -1385,6 +1454,7 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
                     )}
                   </div>
                 </div>
+                </Fragment>
                 );
               })}
 
@@ -2086,7 +2156,7 @@ export default function MessagesPage({ onBack, onEventsClick, onGroupsClick, onC
               <button className="msg-list-empty-cta" onClick={() => setNewMsgOpen(true)}>New Message</button>
             </div>
           )}
-          {conversations.map(conv => (
+          {visibleConversations.map(conv => (
             <div
               key={conv.id}
               className={`msg-conv${conv.unreadCount > 0 ? ' msg-conv--unread' : ''}`}

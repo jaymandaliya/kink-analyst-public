@@ -2,10 +2,12 @@ import { useDispatch, useSelector } from 'react-redux';
 import { selectPlan } from '../../store/slices/plansSlice';
 import { useEffect, useState, useMemo } from 'react';
 
+// "Most Popular" is no longer decided here — it comes from the backend's
+// per-plan `isPopular` flag (admin-configurable), not the tier name.
 const TIER_META = {
-  free:     { label: 'STARTER',      button: 'Join for Free', popular: false, variant: 'outline' },
-  gold:     { label: 'INFLUENCER',   button: 'Get Gold',      popular: true,  variant: 'wave'    },
-  platinum: { label: 'PROFESSIONAL', button: 'Go Platinum',   popular: false, variant: 'outline' },
+  free:     { label: 'STARTER',      button: 'Join for Free', variant: 'outline' },
+  gold:     { label: 'INFLUENCER',   button: 'Get Gold',      variant: 'wave'    },
+  platinum: { label: 'PROFESSIONAL', button: 'Go Platinum',   variant: 'outline' },
 };
 
 const COUNTER_DELAYS = [500, 680, 860];
@@ -39,7 +41,8 @@ export default function PlanCard({ plan, index = 0, isSelected = false, onCardCl
   const { selecting } = useSelector((state) => state.plans);
   const [displayPrice, setDisplayPrice] = useState(0);
 
-  const meta        = TIER_META[plan.tier] ?? { label: plan.tier.toUpperCase(), button: 'Select Plan', popular: false, variant: 'outline' };
+  const meta        = TIER_META[plan.tier] ?? { label: plan.tier.toUpperCase(), button: 'Select Plan', variant: 'outline' };
+  const isPopular   = plan.isPopular ?? false;
   const tierName    = plan.tier.charAt(0).toUpperCase() + plan.tier.slice(1) + ' Tier';
   const isGold      = plan.tier === 'gold';
   const isPlatinum  = plan.tier === 'platinum';
@@ -100,11 +103,11 @@ export default function PlanCard({ plan, index = 0, isSelected = false, onCardCl
 
   const cardEl = (
     <div
-      className={`plan-card plan-card--${plan.tier}${meta.popular ? ' plan-card--popular' : ''}${isSelected ? ' plan-card--selected' : ''}`}
+      className={`plan-card plan-card--${plan.tier}${isPopular ? ' plan-card--popular' : ''}${isSelected ? ' plan-card--selected' : ''}`}
       style={{ '--card-delay': isGold ? undefined : cardDelay, '--tier-color': tierColor }}
       onClick={onCardClick}
     >
-      {meta.popular && <div className="popular-badge">Most Popular</div>}
+      {isPopular && <div className="popular-badge">Most Popular</div>}
 
       <p className="plan-label">{meta.label}</p>
       <h3 className="plan-name">{tierName}</h3>

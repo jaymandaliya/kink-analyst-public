@@ -17,6 +17,7 @@ export const fetchSuggestions = createAsyncThunk(
           _id: uid,
           name: s.name ?? s.fullName ?? s.user?.name ?? s.user?.fullName ?? '',
           avatar: (() => { const av = s.avatar ?? s.user?.avatar ?? ''; return av?.startsWith?.('http') ? av : ''; })(),
+          mutualFriends: s.mutualCount ?? s.mutualFriends ?? s.user?.mutualCount ?? 0,
         };
       });
     } catch (err) {
