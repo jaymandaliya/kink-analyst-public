@@ -7,6 +7,7 @@ import { fetchNotifications, markNotificationsRead, markNotificationRead } from 
 import { fetchMyPostsCount } from '../../store/slices/postsSlice';
 import { disconnectSocket } from '../../services/socket';
 import { fetchAllUsers, acceptFriendRequest, rejectFriendRequest } from '../../store/slices/usersSlice';
+import { acceptInvitation, rejectInvitation } from '../../store/slices/invitationsSlice';
 import { showToast } from '../../store/slices/toastSlice';
 
 function BellIcon() {
@@ -197,6 +198,40 @@ export default function Navbar({ onMessagesClick, onProfileClick, onConnectionsC
     }
   }
 
+  async function handleAcceptGroupInvite(n, nid) {
+    const invId = n.relatedInvitation?._id ?? n.relatedInvitation?.id ?? nid;
+    if (!invId || respondingNotifId) return;
+    setRespondingNotifId(nid);
+    try {
+      const result = await dispatch(acceptInvitation(invId));
+      if (acceptInvitation.fulfilled.match(result)) {
+        setRespondedNotifActions(prev => new Map(prev).set(nid, 'accepted'));
+        dispatch(showToast({ message: 'Joined group!', type: 'success' }));
+      } else {
+        dispatch(showToast({ message: result.payload?.message || 'Failed to accept', type: 'error' }));
+      }
+    } finally {
+      setRespondingNotifId(null);
+    }
+  }
+
+  async function handleRejectGroupInvite(n, nid) {
+    const invId = n.relatedInvitation?._id ?? n.relatedInvitation?.id ?? nid;
+    if (!invId || respondingNotifId) return;
+    setRespondingNotifId(nid);
+    try {
+      const result = await dispatch(rejectInvitation(invId));
+      if (rejectInvitation.fulfilled.match(result)) {
+        setRespondedNotifActions(prev => new Map(prev).set(nid, 'declined'));
+        dispatch(showToast({ message: 'Invitation declined', type: 'info' }));
+      } else {
+        dispatch(showToast({ message: result.payload?.message || 'Failed to decline', type: 'error' }));
+      }
+    } finally {
+      setRespondingNotifId(null);
+    }
+  }
+
   return (
     <nav className="home-navbar">
       <div className="navbar-left">
@@ -300,6 +335,8 @@ export default function Navbar({ onMessagesClick, onProfileClick, onConnectionsC
                 const nid = n.id ?? n._id;
                 const respondedAction = respondedNotifActions.get(nid);
                 const isPendingRequest = n.type === 'friend_request' && !respondedAction;
+                const isPendingGroupInvite = (n.type === 'group_invitation' || n.relatedGroup) && !respondedAction;
+                if (n.relatedGroup) console.log('Group invite notif:', { type: n.type, has_relatedGroup: true });
                 return (
                   <div
                     key={nid ?? i}
@@ -313,6 +350,10 @@ export default function Navbar({ onMessagesClick, onProfileClick, onConnectionsC
                       if (n.type === 'friend_request' || n.type === 'friend_request_accepted') {
                         // Navigate to Connections tab with Sent Requests view
                         onNavigateToConnections?.('sent-requests');
+                      } else if (n.type === 'group_invitation' && n.relatedGroup) {
+                        // Navigate to the group
+                        const gid = n.relatedGroup?._id ?? n.relatedGroup?.id;
+                        if (gid) window.location.hash = '#/group/' + gid;
                       } else if (n.relatedPost) {
                         // mention/comment/like notifications carry the post they refer to
                         onPostClick?.(n.relatedPost);
@@ -345,9 +386,19 @@ export default function Navbar({ onMessagesClick, onProfileClick, onConnectionsC
                           </button>
                         </div>
                       )}
+                      {isPendingGroupInvite && (
+                        <div className="navbar-notif-actions" onClick={(e) => e.stopPropagation()}>
+                          <button type="button" className="navbar-notif-action navbar-notif-action--accept" disabled={respondingNotifId === nid} onClick={() => handleAcceptGroupInvite(n, nid)}>
+                            {respondingNotifId === nid ? '...' : 'Accept'}
+                          </button>
+                          <button type="button" className="navbar-notif-action navbar-notif-action--reject" disabled={respondingNotifId === nid} onClick={() => handleRejectGroupInvite(n, nid)}>
+                            {respondingNotifId === nid ? '...' : 'Reject'}
+                          </button>
+                        </div>
+                      )}
                       {respondedAction && (
                         <p className="navbar-notif-responded">
-                          {respondedAction === 'accepted' ? 'Request accepted' : 'Request declined'}
+                          {respondedAction === 'accepted' ? (n.type === 'group_invitation' ? 'Joined!' : 'Request accepted') : 'Declined'}
                         </p>
                       )}
                     </div>
